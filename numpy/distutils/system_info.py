@@ -825,7 +825,15 @@ class fftw_info(system_info):
         """Returns True on successful version detection, else False"""
         lib_dirs = self.get_lib_dirs()
         incl_dirs = self.get_include_dirs()
-        libs = self.get_libs(self.section + '_libs', ver_param['libs'])
+        # Store the old value of _lib_names
+        _lib_names = getattr(self, '_lib_names', None)
+        self._lib_names = ver_param['libs']
+        # This function retrieves from the "libraries = "
+        libs = self.get_libraries()
+        libs = self.get_libs(self.section + '_libs', libs)
+        if _lib_names not is None:
+            # Reinstantiate the _lib_names
+            setattr(self, '_lib_names', _lib_names)
         info = self.check_libs(lib_dirs, libs)
         if info is not None:
             flag = 0
@@ -961,7 +969,7 @@ class djbfft_info(system_info):
 class mkl_info(system_info):
     section = 'mkl'
     dir_env_var = 'MKLROOT'
-    _lib_mkl = ['mkl_rt']
+    _lib_names = ['mkl_rt']
 
     def get_mkl_rootdir(self):
         mklroot = os.environ.get('MKLROOT', None)
@@ -1011,7 +1019,8 @@ class mkl_info(system_info):
     def calc_info(self):
         lib_dirs = self.get_lib_dirs()
         incl_dirs = self.get_include_dirs()
-        mkl_libs = self.get_libs('mkl_libs', self._lib_mkl)
+        mkl_libs = self.get_libraries()
+        mkl_libs = self.get_libs('mkl_libs', mkl_libs)
         info = self.check_libs2(lib_dirs, mkl_libs)
         if info is None:
             return
@@ -1254,8 +1263,8 @@ class lapack_info(system_info):
 
     def calc_info(self):
         lib_dirs = self.get_lib_dirs()
-
-        lapack_libs = self.get_libs('lapack_libs', self._lib_names)
+        lapack_libs = self.get_libraries()
+        lapack_libs = self.get_libs('lapack_libs', lapack_libs)
         info = self.check_libs(lib_dirs, lapack_libs, [])
         if info is None:
             return
@@ -1663,7 +1672,11 @@ class blas_info(system_info):
 
     def calc_info(self):
         lib_dirs = self.get_lib_dirs()
-        blas_libs = self.get_libs('blas_libs', self._lib_names)
+
+        # First get the libraries from the "libraries"
+        # key, then revert back to the "blas_libs" key
+        blas_libs = self.get_libraries()
+        blas_libs = self.get_libs('blas_libs', blas_libs)
         info = self.check_libs(lib_dirs, blas_libs, [])
         if info is None:
             return
@@ -1704,24 +1717,33 @@ class blas_info(system_info):
                 # check we can compile (find headers)
                 obj = c.compile([src], output_dir=tmpdir,
                                 include_dirs=self.get_include_dirs())
+            except distutils.ccompiler.CompileError:
+                res = None
+
+            else:
+                res = None
 
                 # check we can link (find library)
                 # some systems have separate cblas and blas libs. First
                 # check for cblas lib, and if not present check for blas lib.
                 try:
                     c.link_executable(obj, os.path.join(tmpdir, "a.out"),
-                                      libraries=["cblas"],
+                                      libraries=info['libraries'],
                                       library_dirs=info['library_dirs'],
                                       extra_postargs=info.get('extra_link_args', []))
-                    res = "cblas"
-                except distutils.ccompiler.LinkError:
-                    c.link_executable(obj, os.path.join(tmpdir, "a.out"),
-                                      libraries=["blas"],
-                                      library_dirs=info['library_dirs'],
-                                      extra_postargs=info.get('extra_link_args', []))
-                    res = "blas"
-            except distutils.ccompiler.CompileError:
-                res = None
+                except:
+                    try:
+                        c.link_executable(obj, os.path.join(tmpdir, "a.out"),
+                                          libraries=info['libraries'] + ['cblas'],
+                                          library_dirs=info['library_dirs'],
+                                          extra_postargs=info.get('extra_link_args', []))
+                        res = "cblas"
+                    except distutils.ccompiler.LinkError:
+                        c.link_executable(obj, os.path.join(tmpdir, "a.out"),
+                                          libraries=info['libraries'] + ['blas'],
+                                          library_dirs=info['library_dirs'],
+                                          extra_postargs=info.get('extra_link_args', []))
+                        res = "blas"
         finally:
             shutil.rmtree(tmpdir)
         return res
@@ -1738,10 +1760,8 @@ class openblas_info(blas_info):
 
     def calc_info(self):
         lib_dirs = self.get_lib_dirs()
-
-        openblas_libs = self.get_libs('libraries', self._lib_names)
-        if openblas_libs == self._lib_names: # backward compat with 1.8.0
-            openblas_libs = self.get_libs('openblas_libs', self._lib_names)
+        openblas_libs = self.get_libraries()
+        openblas_libs = self.get_libs('openblas_libs', openblas_libs)
         info = self.check_libs(lib_dirs, openblas_libs, [])
         if info is None:
             return
@@ -1806,10 +1826,8 @@ class blis_info(blas_info):
 
     def calc_info(self):
         lib_dirs = self.get_lib_dirs()
-        blis_libs = self.get_libs('libraries', self._lib_names)
-        if blis_libs == self._lib_names:
-            blis_libs = self.get_libs('blis_libs', self._lib_names)
-
+        blis_libs = self.get_libraries()
+        blis_libs = self.get_libs('blis_libs', blis_libs)
         info = self.check_libs2(lib_dirs, blis_libs, [])
         if info is None:
             return
@@ -2275,8 +2293,8 @@ class amd_info(system_info):
 
     def calc_info(self):
         lib_dirs = self.get_lib_dirs()
-
-        amd_libs = self.get_libs('amd_libs', self._lib_names)
+        amd_libs = self.get_libraries()
+        amd_libs = self.get_libs('amd_libs', amd_libs)
         info = self.check_libs(lib_dirs, amd_libs, [])
         if info is None:
             return
@@ -2306,8 +2324,8 @@ class umfpack_info(system_info):
 
     def calc_info(self):
         lib_dirs = self.get_lib_dirs()
-
-        umfpack_libs = self.get_libs('umfpack_libs', self._lib_names)
+        umfpack_libs = self.get_libraries()
+        umfpack_libs = self.get_libs('umfpack_libs', umfpack_libs)
         info = self.check_libs(lib_dirs, umfpack_libs, [])
         if info is None:
             return
